@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>FFmpeg Trim Studio</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="background-grid"></div>
+
+  <main id="loginView" class="login-shell hidden">
+    <section class="login-card">
+      <div class="brand-mark">FT</div>
+      <p class="eyebrow">PRIVATE MEDIA TOOL</p>
+      <h1>FFmpeg Trim Studio</h1>
+      <p class="muted">Password-protected trimming, subtitle rebasing, stream mapping, and background encoding.</p>
+      <form id="loginForm" class="stack">
+        <label class="field">
+          <span>Password</span>
+          <input id="password" type="password" autocomplete="current-password" placeholder="Enter password" required>
+        </label>
+        <button class="button primary full" type="submit">Unlock studio</button>
+        <p id="loginError" class="error-text" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <div id="appView" class="app-shell hidden">
+    <header class="topbar">
+      <div class="brand-row">
+        <div class="brand-mark small">FT</div>
+        <div>
+          <strong>FFmpeg Trim Studio</strong>
+          <span>Background media jobs</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="worker-pill"><i></i> Background queue enabled</span>
+        <button id="logoutButton" class="button ghost compact" type="button">Log out</button>
+      </div>
+    </header>
+
+    <div class="content-grid">
+      <section class="panel composer-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">NEW JOB</p>
+            <h2>Cut, trim, encode</h2>
+          </div>
+          <div class="command-chip">-ss · -to · -map</div>
+        </div>
+
+        <form id="jobForm" class="job-form">
+          <div class="source-switch" role="tablist">
+            <button class="source-tab active" data-source="upload" type="button">Upload file</button>
+            <button class="source-tab" data-source="url" type="button">Direct URL</button>
+          </div>
+          <input id="sourceType" name="source_type" type="hidden" value="upload">
+
+          <div id="uploadSource" class="source-panel">
+            <label class="drop-zone" for="mediaFile">
+              <input id="mediaFile" name="media_file" type="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m2ts">
+              <span class="drop-icon">↑</span>
+              <strong>Choose video or container file</strong>
+              <small id="mediaFileName">MKV, MP4, WebM, MOV, TS and other FFmpeg-readable formats</small>
+            </label>
+          </div>
+
+          <div id="urlSource" class="source-panel hidden">
+            <label class="field">
+              <span>Direct media URL</span>
+              <input id="sourceUrl" name="source_url" type="url" placeholder="https://example.com/video.mkv">
+              <small>HTTP/HTTPS only. Private and local network destinations are blocked.</small>
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>Start (-ss)</span>
+              <input name="start_time" value="00:00:00.000" placeholder="00:01:20.500" required>
+            </label>
+            <label class="field">
+              <span>End (-to)</span>
+              <input name="end_time" value="00:00:10.000" placeholder="00:01:35.000" required>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>External subtitle</span>
+            <input id="subtitleFile" name="subtitle_file" type="file" accept=".ass,.ssa,.srt,.vtt">
+            <small id="subtitleFileName">Optional. Cues are trimmed and shifted so the clip begins at 00:00:00.</small>
+          </label>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>Output name</span>
+              <input name="output_name" value="trimmed" required>
+            </label>
+            <label class="field">
+              <span>Container</span>
+              <select id="outputFormat" name="output_format">
+                <option value="mkv" selected>MKV — full ASS + attachments</option>
+                <option value="mp4">MP4 — subtitles converted to mov_text</option>
+                <option value="webm">WebM — subtitles converted to WebVTT</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>Encoding preset</span>
+              <select id="preset" name="preset">
+                <option value="copy">Stream copy — fastest, keyframe-limited</option>
+                <option value="x264-medium" selected>H.264 medium — balanced</option>
+                <option value="x264-slow">H.264 slow — smaller / slower</option>
+                <option value="x265-medium">H.265 medium — efficient</option>
+                <option value="x265-slow">H.265 slow — more efficient / slower</option>
+                <option value="animethemes-vp9">AnimeThemes VP9 — two-pass</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>CRF</span>
+              <input name="crf" type="number" min="0" max="51" value="18">
+            </label>
+          </div>
+
+          <div class="form-grid two">
+            <label class="field">
+              <span>Audio</span>
+              <select name="audio_mode">
+                <option value="copy" selected>Copy when container permits</option>
+                <option value="encode">Encode for compatibility</option>
+              </select>
+            </label>
+            <label class="check-field">
+              <input name="anime_filter" type="checkbox" value="true">
+              <span>
+                <strong>AnimeThemes filter chain</strong>
+                <small>hqdn3d + gradfun + unsharp</small>
+              </span>
+            </label>
+          </div>
+
+          <div id="formatNotice" class="notice">
+            MKV is recommended: supported text subtitle tracks are trimmed and remuxed, while fonts and other Matroska attachments are preserved.
+          </div>
+
+          <button id="executeButton" class="button primary execute" type="submit">
+            <span>Execute background job</span>
+            <kbd>FFmpeg</kbd>
+          </button>
+          <p id="formError" class="error-text" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="panel jobs-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">QUEUE</p>
+            <h2>Processing history</h2>
+          </div>
+          <button id="refreshButton" class="button ghost compact" type="button">Refresh</button>
+        </div>
+        <div id="jobsList" class="jobs-list">
+          <div class="empty-state">
+            <strong>No jobs yet</strong>
+            <span>Create your first trim job from the panel.</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="logModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="logTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">PROCESS OUTPUT</p>
+          <h3 id="logTitle">FFmpeg log</h3>
+        </div>
+        <div class="modal-actions">
+          <button id="clearLogButton" class="button ghost compact" type="button">Clear</button>
+          <button id="closeLogButton" class="button ghost compact" type="button">Close</button>
+        </div>
+      </div>
+      <pre id="logOutput">Loading…</pre>
+    </div>
+  </div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
