@@ -1,0 +1,16 @@
+services:
+  ffmpeg-trim-studio:
+    build: .
+    container_name: ffmpeg-trim-studio
+    ports:
+      - "8000:8000"
+    environment:
+      APP_PASSWORD: "${APP_PASSWORD:-change-me}"
+      SESSION_SECRET: "${SESSION_SECRET:-replace-with-a-long-random-value}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      DATA_DIR: /data
+      MAX_UPLOAD_BYTES: "${MAX_UPLOAD_BYTES:-21474836480}"
+      MAX_URL_BYTES: "${MAX_URL_BYTES:-21474836480}"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
