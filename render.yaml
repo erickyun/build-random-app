@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ffmpeg-trim-studio
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    branch: ffmpeg-trim-studio-render
+    autoDeploy: false
+    healthCheckPath: /api/health
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: APP_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: DATA_DIR
+        value: /data
+      - key: MAX_UPLOAD_BYTES
+        value: "4294967296"
+      - key: MAX_URL_BYTES
+        value: "4294967296"
+      - key: MAX_CLIP_SECONDS
+        value: "43200"
+    disk:
+      name: ffmpeg-data
+      mountPath: /data
+      sizeGB: 20
