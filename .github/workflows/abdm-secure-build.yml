@@ -71,10 +71,18 @@ jobs:
           $contentScript = "browser/src/contentscripts/ContentScript.ts"
           $content = Get-Content $contentScript -Raw
           $brokenType = 'type: "ytdlp_extract" as DownloadableMedia["type"]'
+          $brokenDuplicateCheck = 'const hasYtDlp = mediaList.some(m => m.type === "ytdlp_extract");'
           if (-not $content.Contains($brokenType)) {
             throw "Expected ytdlp_extract integration marker was not found"
           }
+          if (-not $content.Contains($brokenDuplicateCheck)) {
+            throw "Expected ytdlp_extract duplicate check was not found"
+          }
           $content = $content.Replace($brokenType, 'type: "http"')
+          $content = $content.Replace(
+            $brokenDuplicateCheck,
+            'const hasYtDlp = mediaList.some(m => m.uri === window.location.href);'
+          )
           $content = $content.Replace(
             'if (!window.location.hostname.includes("youtube.com")) return false',
             'const host = window.location.hostname.toLowerCase(); if (!(host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be")) return false'
@@ -90,6 +98,9 @@ jobs:
           }
           if (-not $content.Contains('type: "http"')) {
             throw "YouTube item is not being sent as HTTP"
+          }
+          if (-not $content.Contains('m.uri === window.location.href')) {
+            throw "YouTube duplicate detection is not using the page URL"
           }
 
       - name: Set up JetBrains JDK 25
