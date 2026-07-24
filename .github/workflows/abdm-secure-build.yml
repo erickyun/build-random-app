@@ -54,7 +54,7 @@ jobs:
           path: browser
           persist-credentials: false
 
-      - name: Apply reviewed security patches
+      - name: Apply reviewed security and integration patches
         shell: pwsh
         run: |
           $core = "abdm/downloader/core/src/commonMain/kotlin/ir/amirab/downloader/downloaditem/ytdlp"
@@ -64,6 +64,33 @@ jobs:
           Copy-Item "abdm-secure/patches/YtdlpDownloadJob.kt" "$core/YtdlpDownloadJob.kt" -Force
           Copy-Item "abdm-secure/patches/YtdlpProcessManager.kt" "$core/YtdlpProcessManager.kt" -Force
           Copy-Item "abdm-secure/patches/YtdlpLinkChecker.kt" "$ui/YtdlpLinkChecker.kt" -Force
+
+          # The desktop integration API only accepts "http" or "hls". The forked
+          # extension incorrectly sent "ytdlp_extract", so the request was rejected
+          # before the app could route the YouTube URL to YtdlpDownloadCredentials.
+          $contentScript = "browser/src/contentscripts/ContentScript.ts"
+          $content = Get-Content $contentScript -Raw
+          $brokenType = 'type: "ytdlp_extract" as DownloadableMedia["type"]'
+          if (-not $content.Contains($brokenType)) {
+            throw "Expected ytdlp_extract integration marker was not found"
+          }
+          $content = $content.Replace($brokenType, 'type: "http"')
+          $content = $content.Replace(
+            'if (!window.location.hostname.includes("youtube.com")) return false',
+            'const host = window.location.hostname.toLowerCase(); if (!(host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be")) return false'
+          )
+          Set-Content $contentScript $content -Encoding utf8
+
+      - name: Verify browser integration payload fix
+        shell: pwsh
+        run: |
+          $content = Get-Content "browser/src/contentscripts/ContentScript.ts" -Raw
+          if ($content.Contains('ytdlp_extract')) {
+            throw "Unsupported ytdlp_extract payload still exists"
+          }
+          if (-not $content.Contains('type: "http"')) {
+            throw "YouTube item is not being sent as HTTP"
+          }
 
       - name: Set up JetBrains JDK 25
         uses: actions/setup-java@v4
@@ -102,7 +129,7 @@ jobs:
           cache: npm
           cache-dependency-path: browser/package-lock.json
 
-      - name: Build matching Chrome extension
+      - name: Build fixed Chrome extension
         working-directory: browser
         shell: bash
         run: |
@@ -140,6 +167,7 @@ jobs:
           App source tag: kerollosy/ab-download-manager@$env:ABDM_REF
           App source commit: $env:ABDM_COMMIT
           Extension source: kerollosy/ab-download-manager-browser-integration@$env:EXTENSION_COMMIT
+          Extension fix: YouTube payload changed from unsupported ytdlp_extract to http
           Build repository commit: $env:GITHUB_SHA
           Windows installer source filename: $($installer.Name)
           ProductVersion: $($versionInfo.ProductVersion)
@@ -161,7 +189,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ABDownloadManager-2.0.3-secure-windows-x64
+          name: ABDownloadManager-2.0.3-secure-youtube-fix-windows-x64
           path: release/*
           if-no-files-found: error
           retention-days: 30
@@ -169,17 +197,19 @@ jobs:
       - name: Publish prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: abdm-secure-v2.0.3-${{ github.run_number }}
-          name: AB Download Manager 2.0.3 Secure Build ${{ github.run_number }}
+          tag_name: abdm-secure-youtube-fix-v2.0.3-${{ github.run_number }}
+          name: AB Download Manager 2.0.3 Secure YouTube Fix ${{ github.run_number }}
           prerelease: true
           make_latest: false
           generate_release_notes: false
           body: |
             Security-hardened Windows x64 build of Kerollosy's `v2.0.3` yt-dlp fork.
 
-            The `v2.0.3` tag is verified to resolve to commit `${{ env.ABDM_COMMIT }}`. Includes the matching Chrome extension from commit `${{ env.EXTENSION_COMMIT }}`.
+            Fixes the browser integration bug where YouTube media was sent as unsupported `ytdlp_extract`. The extension now sends the page URL as `http`, allowing the desktop app to route it to `YtdlpDownloadCredentials`.
 
-            Changes include strict URL validation, `--ignore-config`, an end-of-options separator, pinned tool versions, SHA-256 verification, atomic replacement and a bundled verified Deno runtime for current YouTube extraction.
+            The `v2.0.3` tag is verified to resolve to commit `${{ env.ABDM_COMMIT }}`. Includes the Chrome extension based on commit `${{ env.EXTENSION_COMMIT }}` with the integration fix applied during the reproducible build.
+
+            Security changes include strict URL validation, ignored external configs, disabled local yt-dlp plugins and remote components, an end-of-options separator, pinned tool versions, SHA-256 verification, atomic replacement and a bundled verified Deno runtime.
 
             The installer is unsigned. Verify every downloaded file against `SHA256SUMS.txt`.
           files: release/*
