@@ -1,0 +1,157 @@
+name: Build secure AB Download Manager
+
+on:
+  push:
+    branches:
+      - agent/abdm-secure-build
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abdm-secure-build
+  cancel-in-progress: false
+
+env:
+  ABDM_COMMIT: 203b8ea059bc18e70d972d48e41267dcfd20dd13
+  EXTENSION_COMMIT: 93da0915d7c9b9f1154909db55338ab91ed777d9
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout build coordinator
+        uses: actions/checkout@v4
+
+      - name: Checkout AB Download Manager source
+        uses: actions/checkout@v4
+        with:
+          repository: kerollosy/ab-download-manager
+          ref: ${{ env.ABDM_COMMIT }}
+          path: abdm
+          persist-credentials: false
+
+      - name: Checkout matching browser extension source
+        uses: actions/checkout@v4
+        with:
+          repository: kerollosy/ab-download-manager-browser-integration
+          ref: ${{ env.EXTENSION_COMMIT }}
+          path: browser
+          persist-credentials: false
+
+      - name: Apply reviewed security patches
+        shell: pwsh
+        run: |
+          $core = "abdm/downloader/core/src/commonMain/kotlin/ir/amirab/downloader/downloaditem/ytdlp"
+          $ui = "abdm/shared/app/src/commonMain/kotlin/com/abdownloadmanager/shared/downloaderinui/ytdlp"
+          Copy-Item "abdm-secure/patches/YtdlpDownloadCredentials.kt" "$core/YtdlpDownloadCredentials.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpDownloadItem.kt" "$core/YtdlpDownloadItem.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpDownloadJob.kt" "$core/YtdlpDownloadJob.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpProcessManager.kt" "$core/YtdlpProcessManager.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpLinkChecker.kt" "$ui/YtdlpLinkChecker.kt" -Force
+
+      - name: Set up JetBrains JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-package: jdk
+          java-version: "25"
+          check-latest: true
+          cache: gradle
+
+      - name: Skip Android build on Windows
+        shell: bash
+        run: echo "SKIP_ANDROID_BUILD=true" >> "$GITHUB_ENV"
+
+      - name: Build Windows application
+        working-directory: abdm
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew createReleaseFolderForCi --stacktrace
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: browser/package-lock.json
+
+      - name: Build matching Chrome extension
+        working-directory: browser
+        shell: bash
+        run: |
+          npm ci
+          npm run pack:chrome
+
+      - name: Collect release files and hashes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+
+          $allExe = Get-ChildItem -Path "abdm/build/ci-release" -Recurse -File -Filter "*.exe"
+          $installer = $allExe |
+            Where-Object { $_.Name -match "windows" -and $_.Name -match "x64|x86_64|amd64" } |
+            Select-Object -First 1
+          if (-not $installer) {
+            $installer = $allExe | Where-Object { $_.Name -match "windows" } | Select-Object -First 1
+          }
+          if (-not $installer) {
+            $installer = $allExe | Select-Object -First 1
+          }
+          if (-not $installer) {
+            Get-ChildItem -Path "abdm/build/ci-release" -Recurse
+            throw "Windows installer was not found"
+          }
+
+          Copy-Item $installer.FullName "release/ABDownloadManager_2.0.3_secure_windows_x64.exe" -Force
+          Copy-Item "browser/dist/chrome.zip" "release/chrome.zip" -Force
+          Compress-Archive -Path "abdm-secure/*" -DestinationPath "release/security-patches-source.zip" -Force
+
+          @"
+          AB Download Manager secure build
+          App source: kerollosy/ab-download-manager@$env:ABDM_COMMIT
+          Extension source: kerollosy/ab-download-manager-browser-integration@$env:EXTENSION_COMMIT
+          Build repository commit: $env:GITHUB_SHA
+          Windows installer source filename: $($installer.Name)
+          "@ | Set-Content "release/BUILDINFO.txt" -Encoding utf8
+
+          Get-ChildItem release -File |
+            Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            } | Set-Content "release/SHA256SUMS.txt" -Encoding ascii
+
+          Get-ChildItem release -File | Format-Table Name, Length
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABDownloadManager-2.0.3-secure-windows-x64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: abdm-secure-v2.0.3-${{ github.run_number }}
+          name: AB Download Manager 2.0.3 Secure Build ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          body: |
+            Security-hardened Windows x64 build of the Kerollosy yt-dlp fork.
+
+            Includes the matching Chrome extension from commit `${{ env.EXTENSION_COMMIT }}`.
+
+            Changes include strict URL validation, `--ignore-config`, an end-of-options separator, pinned tool versions, SHA-256 verification, atomic replacement and a bundled verified Deno runtime for current YouTube extraction.
+
+            The installer is unsigned. Verify every downloaded file against `SHA256SUMS.txt`.
+          files: release/*
