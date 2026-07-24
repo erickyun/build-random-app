@@ -59,6 +59,9 @@ class YtdlpLinkChecker(
             val args = mutableListOf(
                 YtdlpProcessManager.getExePath(),
                 "--ignore-config",
+                "--no-plugin-dirs",
+                "--no-remote-components",
+                "--no-js-runtimes",
                 "--dump-json",
                 "--no-playlist"
             )
