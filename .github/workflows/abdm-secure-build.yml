@@ -1,9 +1,6 @@
 name: Build secure AB Download Manager
 
 on:
-  push:
-    branches:
-      - agent/abdm-secure-build
   pull_request:
     branches:
       - master
@@ -14,7 +11,7 @@ permissions:
 
 concurrency:
   group: abdm-secure-build
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   ABDM_COMMIT: 203b8ea059bc18e70d972d48e41267dcfd20dd13
