@@ -14,6 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  ABDM_REF: v2.0.3
   ABDM_COMMIT: 203b8ea059bc18e70d972d48e41267dcfd20dd13
   EXTENSION_COMMIT: 93da0915d7c9b9f1154909db55338ab91ed777d9
 
@@ -30,9 +31,20 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kerollosy/ab-download-manager
-          ref: ${{ env.ABDM_COMMIT }}
+          ref: ${{ env.ABDM_REF }}
           path: abdm
+          fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify pinned app commit
+        working-directory: abdm
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$ABDM_COMMIT" || {
+            echo "Pinned tag moved: expected $ABDM_COMMIT, got $actual" >&2
+            exit 1
+          }
 
       - name: Checkout matching browser extension source
         uses: actions/checkout@v4
@@ -104,17 +116,19 @@ jobs:
 
           $allExe = Get-ChildItem -Path "abdm/build/ci-release" -Recurse -File -Filter "*.exe"
           $installer = $allExe |
-            Where-Object { $_.Name -match "windows" -and $_.Name -match "x64|x86_64|amd64" } |
+            Where-Object { $_.Name -match "2\.0\.3" -and $_.Name -match "windows" -and $_.Name -match "x64|x86_64|amd64" } |
             Select-Object -First 1
           if (-not $installer) {
-            $installer = $allExe | Where-Object { $_.Name -match "windows" } | Select-Object -First 1
-          }
-          if (-not $installer) {
-            $installer = $allExe | Select-Object -First 1
+            $installer = $allExe | Where-Object { $_.Name -match "2\.0\.3" } | Select-Object -First 1
           }
           if (-not $installer) {
             Get-ChildItem -Path "abdm/build/ci-release" -Recurse
-            throw "Windows installer was not found"
+            throw "A genuine 2.0.3 Windows installer was not found"
+          }
+
+          $versionInfo = $installer.VersionInfo
+          if ($versionInfo.ProductVersion -notlike "2.0.3*") {
+            throw "Unexpected ProductVersion: $($versionInfo.ProductVersion)"
           }
 
           Copy-Item $installer.FullName "release/ABDownloadManager_2.0.3_secure_windows_x64.exe" -Force
@@ -123,10 +137,13 @@ jobs:
 
           @"
           AB Download Manager secure build
-          App source: kerollosy/ab-download-manager@$env:ABDM_COMMIT
+          App source tag: kerollosy/ab-download-manager@$env:ABDM_REF
+          App source commit: $env:ABDM_COMMIT
           Extension source: kerollosy/ab-download-manager-browser-integration@$env:EXTENSION_COMMIT
           Build repository commit: $env:GITHUB_SHA
           Windows installer source filename: $($installer.Name)
+          ProductVersion: $($versionInfo.ProductVersion)
+          FileVersion: $($versionInfo.FileVersion)
           "@ | Set-Content "release/BUILDINFO.txt" -Encoding utf8
 
           Get-ChildItem release -File |
@@ -138,6 +155,7 @@ jobs:
             } | Set-Content "release/SHA256SUMS.txt" -Encoding ascii
 
           Get-ChildItem release -File | Format-Table Name, Length
+          Get-Content release/BUILDINFO.txt
           Get-Content release/SHA256SUMS.txt
 
       - name: Upload build artifact
@@ -157,9 +175,9 @@ jobs:
           make_latest: false
           generate_release_notes: false
           body: |
-            Security-hardened Windows x64 build of the Kerollosy yt-dlp fork.
+            Security-hardened Windows x64 build of Kerollosy's `v2.0.3` yt-dlp fork.
 
-            Includes the matching Chrome extension from commit `${{ env.EXTENSION_COMMIT }}`.
+            The `v2.0.3` tag is verified to resolve to commit `${{ env.ABDM_COMMIT }}`. Includes the matching Chrome extension from commit `${{ env.EXTENSION_COMMIT }}`.
 
             Changes include strict URL validation, `--ignore-config`, an end-of-options separator, pinned tool versions, SHA-256 verification, atomic replacement and a bundled verified Deno runtime for current YouTube extraction.
 
