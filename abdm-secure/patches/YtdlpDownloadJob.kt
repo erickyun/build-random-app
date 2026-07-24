@@ -98,7 +98,13 @@ class YtdlpDownloadJob(
                     val ffmpegLocationDir = YtdlpProcessManager.resolveFfmpegLocationArg()
                     val outputTemplate = File(downloadItem.folder, downloadItem.name).absolutePath
 
-                    val args = mutableListOf(exePath, "--ignore-config")
+                    val args = mutableListOf(
+                        exePath,
+                        "--ignore-config",
+                        "--no-plugin-dirs",
+                        "--no-remote-components",
+                        "--no-js-runtimes"
+                    )
                     args += YtdlpProcessManager.resolveJsRuntimeArgs()
                     if (ffmpegLocationDir != null) {
                         args += listOf("--ffmpeg-location", ffmpegLocationDir.absolutePath)
