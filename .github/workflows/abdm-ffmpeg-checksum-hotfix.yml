@@ -1,0 +1,189 @@
+name: Build AB Download Manager FFmpeg checksum hotfix
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abdm-ffmpeg-checksum-hotfix
+  cancel-in-progress: true
+
+env:
+  ABDM_REF: v2.0.3
+  ABDM_COMMIT: 203b8ea059bc18e70d972d48e41267dcfd20dd13
+  EXTENSION_COMMIT: 93da0915d7c9b9f1154909db55338ab91ed777d9
+  OLD_FFMPEG_MANIFEST_SHA256: a337d438b703df97be92dbb5642fe7b551b20834867c1eb399ddd09a8e0e38bc
+  FFMPEG_MANIFEST_SHA256: 708bf7f86bf42d7e96937523d432c9d237143b6d0ea89724e7dadb9bb4fe1e22
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout build coordinator
+        uses: actions/checkout@v4
+
+      - name: Checkout application source
+        uses: actions/checkout@v4
+        with:
+          repository: kerollosy/ab-download-manager
+          ref: ${{ env.ABDM_REF }}
+          path: abdm
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify application source
+        working-directory: abdm
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$ABDM_COMMIT"
+
+      - name: Checkout browser extension source
+        uses: actions/checkout@v4
+        with:
+          repository: kerollosy/ab-download-manager-browser-integration
+          ref: ${{ env.EXTENSION_COMMIT }}
+          path: browser
+          persist-credentials: false
+
+      - name: Apply security and functional fixes
+        shell: pwsh
+        run: |
+          $core = "abdm/downloader/core/src/commonMain/kotlin/ir/amirab/downloader/downloaditem/ytdlp"
+          $ui = "abdm/shared/app/src/commonMain/kotlin/com/abdownloadmanager/shared/downloaderinui/ytdlp"
+          Copy-Item "abdm-secure/patches/YtdlpDownloadCredentials.kt" "$core/YtdlpDownloadCredentials.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpDownloadItem.kt" "$core/YtdlpDownloadItem.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpDownloadJob.kt" "$core/YtdlpDownloadJob.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpProcessManager.kt" "$core/YtdlpProcessManager.kt" -Force
+          Copy-Item "abdm-secure/patches/YtdlpLinkChecker.kt" "$ui/YtdlpLinkChecker.kt" -Force
+
+          $manager = "$core/YtdlpProcessManager.kt"
+          $managerContent = Get-Content $manager -Raw
+          if (-not $managerContent.Contains($env:OLD_FFMPEG_MANIFEST_SHA256)) {
+            throw "Old FFmpeg manifest checksum was not found"
+          }
+          $managerContent = $managerContent.Replace(
+            $env:OLD_FFMPEG_MANIFEST_SHA256,
+            $env:FFMPEG_MANIFEST_SHA256
+          )
+          Set-Content $manager $managerContent -Encoding utf8
+
+          $contentScript = "browser/src/contentscripts/ContentScript.ts"
+          $content = Get-Content $contentScript -Raw
+          $content = $content.Replace(
+            'type: "ytdlp_extract" as DownloadableMedia["type"]',
+            'type: "http"'
+          )
+          $content = $content.Replace(
+            'const hasYtDlp = mediaList.some(m => m.type === "ytdlp_extract");',
+            'const hasYtDlp = mediaList.some(m => m.uri === window.location.href);'
+          )
+          $content = $content.Replace(
+            'if (!window.location.hostname.includes("youtube.com")) return false',
+            'const host = window.location.hostname.toLowerCase(); if (!(host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be")) return false'
+          )
+          Set-Content $contentScript $content -Encoding utf8
+
+      - name: Verify applied fixes
+        shell: pwsh
+        run: |
+          $manager = Get-Content "abdm/downloader/core/src/commonMain/kotlin/ir/amirab/downloader/downloaditem/ytdlp/YtdlpProcessManager.kt" -Raw
+          if (-not $manager.Contains($env:FFMPEG_MANIFEST_SHA256)) {
+            throw "Correct FFmpeg manifest checksum was not applied"
+          }
+          if ($manager.Contains($env:OLD_FFMPEG_MANIFEST_SHA256)) {
+            throw "Old FFmpeg manifest checksum remains"
+          }
+          $extension = Get-Content "browser/src/contentscripts/ContentScript.ts" -Raw
+          if ($extension.Contains('ytdlp_extract')) {
+            throw "Unsupported extension payload remains"
+          }
+
+      - name: Set up JetBrains JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-package: jdk
+          java-version: "25"
+          check-latest: true
+          cache: gradle
+
+      - name: Build Windows application
+        working-directory: abdm
+        shell: bash
+        env:
+          SKIP_ANDROID_BUILD: "true"
+        run: |
+          chmod +x gradlew
+          ./gradlew createReleaseFolderForCi --stacktrace
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: browser/package-lock.json
+
+      - name: Build fixed Chrome extension
+        working-directory: browser
+        shell: bash
+        run: |
+          npm ci
+          npm run pack:chrome
+
+      - name: Collect files and SHA-256 hashes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          $installer = Get-ChildItem "abdm/build/ci-release" -Recurse -File -Filter "*.exe" |
+            Where-Object { $_.Name -match "2\.0\.3" -and $_.Name -match "windows" } |
+            Select-Object -First 1
+          if (-not $installer) { throw "Windows 2.0.3 installer not found" }
+          if ($installer.VersionInfo.ProductVersion -notlike "2.0.3*") {
+            throw "Unexpected ProductVersion $($installer.VersionInfo.ProductVersion)"
+          }
+
+          Copy-Item $installer.FullName "release/ABDownloadManager_2.0.3_secure_youtube_ffmpeg_fix_windows_x64.exe"
+          Copy-Item "browser/dist/chrome.zip" "release/chrome.zip"
+          Compress-Archive -Path "abdm-secure/*" -DestinationPath "release/security-patches-source.zip" -Force
+
+          @"
+          Application: kerollosy/ab-download-manager@$env:ABDM_REF ($env:ABDM_COMMIT)
+          Extension: kerollosy/ab-download-manager-browser-integration@$env:EXTENSION_COMMIT
+          FFmpeg checksum manifest SHA-256: $env:FFMPEG_MANIFEST_SHA256
+          YouTube integration payload: http
+          ProductVersion: $($installer.VersionInfo.ProductVersion)
+          "@ | Set-Content "release/BUILDINFO.txt" -Encoding utf8
+
+          Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content "release/SHA256SUMS.txt" -Encoding ascii
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABDownloadManager-2.0.3-secure-youtube-ffmpeg-fix
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: abdm-secure-youtube-ffmpeg-fix-v2.0.3-${{ github.run_number }}
+          name: AB Download Manager 2.0.3 YouTube + FFmpeg Fix ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          files: release/*
+          body: |
+            Fixes both YouTube browser integration and the incorrect pinned SHA-256 for BtbN FFmpeg's `autobuild-2026-07-23-14-16/checksums.sha256` asset.
+
+            The manifest itself is pinned to `${{ env.FFMPEG_MANIFEST_SHA256 }}`. The FFmpeg ZIP is then verified against the hash contained inside that verified manifest.
+
+            The installer is unsigned. Compare downloads with `SHA256SUMS.txt`.
